@@ -8,7 +8,7 @@ use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use diesel::prelude::*;
 use diesel::pg::PgConnection;
 use dotenv::dotenv;
-use models::{User, NewUser};
+use models::{User, LoginUser, NewUser};
 use serde::{Deserialize, Serialize,};
 use tera::{Context, Tera};
 
@@ -17,12 +17,6 @@ struct Post {
     title: String,
     link: String,
     author: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct LoginUser {
-    username: String,
-    password: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,8 +57,25 @@ async fn login(tera: web::Data<Tera>) -> impl Responder {
 }
 
 async fn process_login(data: web::Form<LoginUser>) -> impl Responder {
-    println!("{:?}", data);
-    HttpResponse::Ok().body(format!("Logged in: {}", data.username))
+    use schema::users::dsl::{username, users};
+
+    let connection = establish_connection();
+    let user = users.filter(username.eq(&data.username)).first::<User>(&connection);
+
+    match user {
+        Ok(u) => {
+            if u.password == data.password {
+                println!("{:?}", data);
+                HttpResponse::Ok().body(format!("Logged in: {}", data.username))
+            } else {
+                HttpResponse::Ok().body(("Incorrect password"))
+            }
+        },
+        Err(e) => {
+            println!("{:?}", e);
+            HttpResponse::Ok().body("User doesn't exist")
+        }
+    }
 }
 
 async fn signup(tera: web::Data<Tera>) -> impl Responder {

@@ -4,6 +4,7 @@ extern crate diesel;
 pub mod schema;
 pub mod models;
 
+use actix_identity::{CookieIdentityPolicy, Identity, IdentityService};
 use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use diesel::prelude::*;
 use diesel::pg::PgConnection;
@@ -48,15 +49,18 @@ async fn index(tera: web::Data<Tera>) -> impl Responder {
     HttpResponse::Ok().body(rendered)
 }
 
-async fn login(tera: web::Data<Tera>) -> impl Responder {
+async fn login(tera: web::Data<Tera>, id: Identity) -> impl Responder {
     let mut data = Context::new();
     data.insert("title", "Login");
 
+    if let Some(id) = id.identity() {
+        return HttpResponse::Ok().body("Already logged in")
+    }
     let rendered = tera.render("login.html", &data).unwrap();
     HttpResponse::Ok().body(rendered)
 }
 
-async fn process_login(data: web::Form<LoginUser>) -> impl Responder {
+async fn process_login(data: web::Form<LoginUser>, id: Identity) -> impl Responder {
     use schema::users::dsl::{username, users};
 
     let connection = establish_connection();
@@ -65,7 +69,8 @@ async fn process_login(data: web::Form<LoginUser>) -> impl Responder {
     match user {
         Ok(u) => {
             if u.password == data.password {
-                println!("{:?}", data);
+                let session_token = String::from(u.username);
+                id.remember(session_token);
                 HttpResponse::Ok().body(format!("Logged in: {}", data.username))
             } else {
                 HttpResponse::Ok().body(("Incorrect password"))
@@ -76,6 +81,11 @@ async fn process_login(data: web::Form<LoginUser>) -> impl Responder {
             HttpResponse::Ok().body("User doesn't exist")
         }
     }
+}
+
+async fn logout(id: Identity) -> impl Responder {
+    id.forget();
+    HttpResponse::Ok().body("Logged out")
 }
 
 async fn signup(tera: web::Data<Tera>) -> impl Responder {
@@ -128,12 +138,19 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
         let tera = Tera::new("templates/**/*").unwrap();
         App::new()
+            .wrap(IdentityService::new(
+                CookieIdentityPolicy::new(&[0;32])
+                    .name("auth-cookie")
+                    .secure(false)
+                )
+            )
             .data(tera)
             .route("/", web::get().to(index))
             .route("/signup", web::get().to(signup))
             .route("/signup", web::post().to(process_signup))
             .route("/login", web::get().to(login))
             .route("/login", web::post().to(process_login))
+            .route("/logout", web::to(logout))
             .route("/submission", web::get().to(submission))
             .route("/submission", web::post().to(process_submission))
     })
